@@ -45,11 +45,7 @@ import lombok.extern.slf4j.Slf4j;
 public class TranscriptionWebSocketHandler extends BinaryWebSocketHandler {
 
     
-private static final String WHISPER_URL =
-        System.getenv().getOrDefault(
-                "WHISPER_URL",
-                "http://127.0.0.1:8001/transcribe"
-        );
+private static final String WHISPER_URL = "https://voiceflow-speech-to-text.onrender.com/transcribe";
 
     /*
      * React currently sends a chunk every 250ms.
