@@ -12,7 +12,7 @@ MODEL_NAME = os.getenv("WHISPER_MODEL", "small")
 print(f"Loading Whisper model: {MODEL_NAME}")
 
 model = WhisperModel(
-    MODEL_NAME,
+    "tiny",
     device="cpu",
     compute_type="int8"
 )
