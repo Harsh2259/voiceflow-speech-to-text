@@ -1,0 +1,65 @@
+# =========================
+# Java / Maven
+# =========================
+target/
+**/target/
+*.class
+
+# Maven wrapper
+.mvn/wrapper/maven-wrapper.jar
+
+# =========================
+# Node / Vite
+# =========================
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+**/venv/
+
+# =========================
+# Environment / Secrets
+# =========================
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# =========================
+# IDE / Editor
+# =========================
+.idea/
+.vscode/
+*.iml
+*.classpath
+*.project
+.settings/
+**/.settings/
+
+# =========================
+# Local test / debug files
+# =========================
+test.wav
+**/test.wav
+backend-error.txt
+*.log
+
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Temporary files
+# =========================
+*.tmp
+*.temp
