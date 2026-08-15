@@ -5,10 +5,14 @@ import os
 
 app = FastAPI(title="Voiceflow Whisper Service")
 
-print("Loading Whisper model...")
+# Use a smaller model by default for cloud deployment.
+# You can change this with the WHISPER_MODEL environment variable.
+MODEL_NAME = os.getenv("WHISPER_MODEL", "small")
+
+print(f"Loading Whisper model: {MODEL_NAME}")
 
 model = WhisperModel(
-    "large-v3",
+    MODEL_NAME,
     device="cpu",
     compute_type="int8"
 )
@@ -21,7 +25,7 @@ def health_check():
     return {
         "status": "ok",
         "service": "whisper",
-        "model": "large-v3"
+        "model": MODEL_NAME
     }
 
 
@@ -55,7 +59,9 @@ async def transcribe(
             beam_size=5
         )
 
-        text = "".join(segment.text for segment in segments).strip()
+        text = "".join(
+            segment.text for segment in segments
+        ).strip()
 
         print(f"Detected language: {info.language}")
         print(f"Transcript: {text}")
@@ -67,6 +73,7 @@ async def transcribe(
 
     except Exception as e:
         print(f"Transcription error: {e}")
+
         raise HTTPException(
             status_code=500,
             detail=str(e)

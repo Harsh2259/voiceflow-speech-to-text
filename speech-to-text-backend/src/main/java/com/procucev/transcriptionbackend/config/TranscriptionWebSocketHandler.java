@@ -1,20 +1,5 @@
 package com.procucev.transcriptionbackend.config;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.procucev.transcriptionbackend.dto.TranscriptionRequest;
-import com.procucev.transcriptionbackend.service.TranscriptionService;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.MediaType;
-import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
-import org.springframework.web.socket.BinaryMessage;
-import org.springframework.web.socket.CloseStatus;
-import org.springframework.web.socket.TextMessage;
-import org.springframework.web.socket.WebSocketSession;
-import org.springframework.web.socket.handler.BinaryWebSocketHandler;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
@@ -26,6 +11,23 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.socket.BinaryMessage;
+import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.BinaryWebSocketHandler;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.procucev.transcriptionbackend.dto.TranscriptionRequest;
+import com.procucev.transcriptionbackend.service.TranscriptionService;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * WebSocket handler for real-time speech transcription.
@@ -42,8 +44,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 @RequiredArgsConstructor
 public class TranscriptionWebSocketHandler extends BinaryWebSocketHandler {
 
-    private static final String WHISPER_URL =
-            "http://127.0.0.1:8001/transcribe";
+    
+private static final String WHISPER_URL =
+        System.getenv().getOrDefault(
+                "WHISPER_URL",
+                "http://127.0.0.1:8001/transcribe"
+        );
 
     /*
      * React currently sends a chunk every 250ms.
