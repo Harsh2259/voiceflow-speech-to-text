@@ -1,5 +1,7 @@
 package com.procucev.transcriptionbackend.entity;
 
+import java.time.LocalDateTime;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -14,8 +16,6 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
-
-import java.time.LocalDateTime;
 
 /**
  * Entity representing a saved speech transcription record in MySQL.
@@ -35,7 +35,7 @@ public class Transcription {
     private Long id;
 
     @Lob
-    @Column(name = "original_text", nullable = false, columnDefinition = "LONGTEXT")
+    @Column(name = "original_text", nullable = false)
     private String originalText;
 
     @Column(name = "language_code", nullable = false, length = 10)

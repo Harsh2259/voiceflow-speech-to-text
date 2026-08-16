@@ -30,7 +30,7 @@ export const transcriptionApi = {
   },
 
   /**
-   * Save a newly transcribed speech text to MySQL
+   * Save a newly transcribed speech text to PostgreSQL
    */
   async create(data: TranscriptionRequest): Promise<Transcription> {
     const response = await apiClient.post<Transcription>('/transcriptions', data);
