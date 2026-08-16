@@ -1,5 +1,5 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
-import { StreamConnectionStatus, WebSocketMessage } from '../types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { StreamConnectionStatus } from '../types';
 
 interface UseTranscriptionWebSocketProps {
   languageCode: string;
@@ -17,127 +17,166 @@ interface UseTranscriptionWebSocketReturn {
   clearTranscript: () => void;
 }
 
-const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8080/ws/transcribe';
-
-// SpeechRecognition type declarations for browser compatibility
-interface IWindow extends Window {
-  webkitSpeechRecognition?: any;
-  SpeechRecognition?: any;
-}
-
-/**
- * Custom hook to manage real microphone speech recognition combined with
- * 250ms audio chunk WebSocket streaming to the Spring Boot backend.
+/*
+ * IMPORTANT:
+ * VITE_WS_URL must be configured in the frontend deployment.
+ *
+ * Example:
+ * VITE_WS_URL=wss://voiceflow-backend-ur7c.onrender.com/ws/transcribe
+ *
+ * For local development:
+ * ws://localhost:8080/ws/transcribe
  */
+const WS_BASE_URL =
+  import.meta.env.VITE_WS_URL ||
+  'ws://localhost:8080/ws/transcribe';
+
 export const useTranscriptionWebSocket = ({
   languageCode,
 }: UseTranscriptionWebSocketProps): UseTranscriptionWebSocketReturn => {
-  const [status, setStatus] = useState<StreamConnectionStatus>('DISCONNECTED');
-  const [transcript, setTranscript] = useState<string>('');
-  const [interimTranscript, setInterimTranscript] = useState<string>('');
-  const [chunksSent, setChunksSent] = useState<number>(0);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [status, setStatus] =
+    useState<StreamConnectionStatus>('DISCONNECTED');
 
-  // Web API references
-  const socketRef = useRef<WebSocket | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const speechRecognizerRef = useRef<any>(null);
+  const [transcript, setTranscript] =
+    useState<string>('');
 
-  // Unmount tracker
-  const isMountedRef = useRef<boolean>(true);
+  const [interimTranscript, setInterimTranscript] =
+    useState<string>('');
+
+  const [chunksSent, setChunksSent] =
+    useState<number>(0);
+
+  const [errorMessage, setErrorMessage] =
+    useState<string | null>(null);
+
+  const socketRef =
+    useRef<WebSocket | null>(null);
+
+  const mediaStreamRef =
+    useRef<MediaStream | null>(null);
+
+  const mediaRecorderRef =
+    useRef<MediaRecorder | null>(null);
+
+  const isMountedRef =
+    useRef<boolean>(true);
+
+  /*
+   * Keep the latest status available to WebSocket callbacks.
+   * This avoids stale React state inside socket.onclose.
+   */
+  const statusRef =
+    useRef<StreamConnectionStatus>('DISCONNECTED');
+
+  const updateStatus = useCallback(
+    (newStatus: StreamConnectionStatus) => {
+      statusRef.current = newStatus;
+
+      if (isMountedRef.current) {
+        setStatus(newStatus);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     isMountedRef.current = true;
+
     return () => {
       isMountedRef.current = false;
     };
   }, []);
 
-  /**
-   * Safely stop microphone stream
+  /*
+   * Stop microphone tracks.
    */
   const cleanupMediaTracks = useCallback(() => {
     if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => {
-        if (track.readyState === 'live') {
-          track.stop();
-        }
-      });
+      mediaStreamRef.current
+        .getTracks()
+        .forEach((track) => {
+          if (track.readyState === 'live') {
+            track.stop();
+          }
+        });
+
       mediaStreamRef.current = null;
     }
   }, []);
 
-  /**
-   * Clean up and close WebSocket connection
+  /*
+   * Close WebSocket.
    */
   const closeSocket = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.onclose = null;
-      socketRef.current.onerror = null;
-      socketRef.current.onmessage = null;
-      if (
-        socketRef.current.readyState === WebSocket.OPEN ||
-        socketRef.current.readyState === WebSocket.CONNECTING
-      ) {
-        socketRef.current.close();
-      }
-      socketRef.current = null;
+    const socket = socketRef.current;
+
+    if (!socket) {
+      return;
     }
+
+    socket.onopen = null;
+    socket.onclose = null;
+    socket.onerror = null;
+    socket.onmessage = null;
+
+    if (
+      socket.readyState === WebSocket.OPEN ||
+      socket.readyState === WebSocket.CONNECTING
+    ) {
+      socket.close();
+    }
+
+    socketRef.current = null;
   }, []);
 
-  /**
-   * Stop active speech recognition and recording session
+  /*
+   * Stop recording.
    */
   const stopRecording = useCallback(() => {
-    // 1. Stop Speech Recognizer
-    if (speechRecognizerRef.current) {
+    if (mediaRecorderRef.current) {
       try {
-        speechRecognizerRef.current.stop();
-      } catch (err) {
-        // ignore
+        if (
+          mediaRecorderRef.current.state !== 'inactive'
+        ) {
+          mediaRecorderRef.current.stop();
+        }
+      } catch (error) {
+        console.warn(
+          'Error stopping MediaRecorder:',
+          error
+        );
       }
-      speechRecognizerRef.current = null;
-    }
 
-    // 2. Stop MediaRecorder
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch (err) {
-        console.warn('Error stopping MediaRecorder:', err);
-      }
       mediaRecorderRef.current = null;
     }
 
     cleanupMediaTracks();
     closeSocket();
 
-    if (isMountedRef.current) {
-      setStatus('DISCONNECTED');
-      setInterimTranscript('');
-    }
-  }, [cleanupMediaTracks, closeSocket]);
+    setInterimTranscript('');
+    updateStatus('DISCONNECTED');
+  }, [
+    cleanupMediaTracks,
+    closeSocket,
+    updateStatus,
+  ]);
 
-  /**
-   * Pause recording
+  /*
+   * Pause recording.
    */
   const pauseRecording = useCallback(() => {
-    if (speechRecognizerRef.current) {
-      try {
-        speechRecognizerRef.current.stop();
-      } catch (e) {}
-    }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state === 'recording'
+    ) {
       mediaRecorderRef.current.pause();
     }
-    if (isMountedRef.current) {
-      setStatus('PAUSED');
-    }
-  }, []);
 
-  /**
-   * Reset transcript
+    updateStatus('PAUSED');
+  }, [updateStatus]);
+
+  /*
+   * Clear transcript.
    */
   const clearTranscript = useCallback(() => {
     setTranscript('');
@@ -146,178 +185,394 @@ export const useTranscriptionWebSocket = ({
     setErrorMessage(null);
   }, []);
 
-  /**
-   * Start capturing live microphone audio and real-time voice speech recognition
+  /*
+   * Start recording.
    */
   const startRecording = useCallback(async () => {
     setErrorMessage(null);
 
-    // If currently paused, resume
+    /*
+     * Resume paused recording.
+     */
     if (
       mediaRecorderRef.current &&
       mediaRecorderRef.current.state === 'paused' &&
       socketRef.current?.readyState === WebSocket.OPEN
     ) {
       mediaRecorderRef.current.resume();
-      if (speechRecognizerRef.current) {
-        try {
-          speechRecognizerRef.current.start();
-        } catch (e) {}
-      }
-      setStatus('RECORDING');
+
+      updateStatus('RECORDING');
+
       return;
     }
 
+    /*
+     * Clean previous session.
+     */
     stopRecording();
 
-    if (isMountedRef.current) {
-      setStatus('CONNECTING');
-    }
+    updateStatus('CONNECTING');
 
     try {
-      // 1. Request microphone access
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+      /*
+       * 1. Request microphone.
+       */
+      if (
+        !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia
+      ) {
+        throw new Error(
+          'This browser does not support microphone access.'
+        );
+      }
+
+      const stream =
+        await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+
       mediaStreamRef.current = stream;
 
-      // 2. Connect to Spring Boot WebSocket proxy
-      const wsUrl = `${WS_BASE_URL}?language=${encodeURIComponent(languageCode)}`;
-      const socket = new WebSocket(wsUrl);
+      /*
+       * 2. Connect to deployed Spring Boot WebSocket.
+       */
+      const wsUrl =
+        `${WS_BASE_URL}?language=${encodeURIComponent(
+          languageCode
+        )}`;
+
+      console.log('Connecting WebSocket:', wsUrl);
+
+      const socket =
+        new WebSocket(wsUrl);
+
       socket.binaryType = 'arraybuffer';
+
       socketRef.current = socket;
 
+      /*
+       * 3. WebSocket connected.
+       */
       socket.onopen = () => {
-        if (!isMountedRef.current) return;
-        setStatus('RECORDING');
+        console.log(
+          'WebSocket connected successfully.'
+        );
 
-        // 3. Start MediaRecorder (250ms binary chunks sent to Spring Boot WebSocket)
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? 'audio/webm;codecs=opus'
-          : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
-          ? 'audio/ogg;codecs=opus'
-          : 'audio/webm';
+        if (!isMountedRef.current) {
+          return;
+        }
 
-        const recorder = new MediaRecorder(stream, { mimeType });
-        mediaRecorderRef.current = recorder;
+        updateStatus('RECORDING');
 
-        recorder.ondataavailable = async (event: BlobEvent) => {
-          if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
-            try {
-              const arrayBuffer = await event.data.arrayBuffer();
-              socket.send(arrayBuffer);
-              if (isMountedRef.current) {
-                setChunksSent((prev) => prev + 1);
-              }
-            } catch (err) {
-              console.error('Failed to send audio chunk:', err);
+        /*
+         * Determine supported audio format.
+         */
+        let mimeType = '';
+
+        if (
+          MediaRecorder.isTypeSupported(
+            'audio/webm;codecs=opus'
+          )
+        ) {
+          mimeType =
+            'audio/webm;codecs=opus';
+        } else if (
+          MediaRecorder.isTypeSupported(
+            'audio/webm'
+          )
+        ) {
+          mimeType = 'audio/webm';
+        } else if (
+          MediaRecorder.isTypeSupported(
+            'audio/ogg;codecs=opus'
+          )
+        ) {
+          mimeType =
+            'audio/ogg;codecs=opus';
+        } else if (
+          MediaRecorder.isTypeSupported(
+            'audio/mp4'
+          )
+        ) {
+          mimeType = 'audio/mp4';
+        }
+
+        console.log(
+          'Selected audio MIME type:',
+          mimeType
+        );
+
+        let recorder: MediaRecorder;
+
+        try {
+          recorder = mimeType
+            ? new MediaRecorder(
+                stream,
+                { mimeType }
+              )
+            : new MediaRecorder(stream);
+        } catch (error) {
+          console.error(
+            'Could not create MediaRecorder:',
+            error
+          );
+
+          setErrorMessage(
+            'Your browser does not support a compatible audio recording format.'
+          );
+
+          updateStatus('ERROR');
+
+          return;
+        }
+
+        mediaRecorderRef.current =
+          recorder;
+
+        /*
+         * 4. Send audio chunks to backend.
+         */
+        recorder.ondataavailable =
+          async (event: BlobEvent) => {
+            if (
+              event.data.size === 0 ||
+              socket.readyState !==
+                WebSocket.OPEN
+            ) {
+              return;
             }
-          }
-        };
 
+            try {
+              const arrayBuffer =
+                await event.data.arrayBuffer();
+
+              socket.send(arrayBuffer);
+
+              if (isMountedRef.current) {
+                setChunksSent(
+                  (previous) =>
+                    previous + 1
+                );
+              }
+
+              console.log(
+                'Audio chunk sent:',
+                event.data.size,
+                'bytes'
+              );
+            } catch (error) {
+              console.error(
+                'Failed to send audio chunk:',
+                error
+              );
+            }
+          };
+
+        /*
+         * 5. Start recording.
+         *
+         * Every 250ms a chunk is generated.
+         */
         recorder.start(250);
 
-        // 4. Initialize Real Speech-to-Text Recognition Engine
-        const win = window as unknown as IWindow;
-        const SpeechRecognition = win.SpeechRecognition || win.webkitSpeechRecognition;
-
-        if (SpeechRecognition) {
-          const recognizer = new SpeechRecognition();
-          speechRecognizerRef.current = recognizer;
-          recognizer.continuous = true;
-          recognizer.interimResults = true;
-          recognizer.lang = languageCode;
-
-          recognizer.onresult = (event: any) => {
-            let interim = '';
-            let finalAccumulated = '';
-
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-              const transcriptPiece = event.results[i][0].transcript;
-              if (event.results[i].isFinal) {
-                finalAccumulated += transcriptPiece + ' ';
-              } else {
-                interim += transcriptPiece;
-              }
-            }
-
-            if (isMountedRef.current) {
-              if (finalAccumulated) {
-                setTranscript((prev) => (prev ? `${prev.trim()} ${finalAccumulated.trim()}` : finalAccumulated.trim()));
-              }
-              setInterimTranscript(interim);
-            }
-          };
-
-          recognizer.onerror = (event: any) => {
-            console.warn('Speech recognition warning/error:', event.error);
-            if (event.error === 'not-allowed') {
-              setErrorMessage('Microphone permission was blocked. Please enable it in browser settings.');
-            }
-          };
-
-          recognizer.onend = () => {
-            // Keep speech recognizer alive while still in recording mode
-            if (isMountedRef.current && mediaRecorderRef.current?.state === 'recording') {
-              try {
-                recognizer.start();
-              } catch (e) {}
-            }
-          };
-
-          recognizer.start();
-        } else {
-          console.warn('Web Speech API is not supported in this browser; falling back to WebSocket proxy simulation.');
-        }
+        console.log(
+          'MediaRecorder started.'
+        );
       };
 
-      socket.onmessage = (event: MessageEvent) => {
-        if (!isMountedRef.current) return;
+      /*
+       * IMPORTANT:
+       * This is where the actual Whisper
+       * transcription response is received.
+       */
+      socket.onmessage = (
+        event: MessageEvent
+      ) => {
+        if (!isMountedRef.current) {
+          return;
+        }
+
         try {
-          const payload: WebSocketMessage = JSON.parse(event.data);
-          if (payload.type === 'STATUS' && payload.status === 'CONNECTED') {
-            setStatus('RECORDING');
-          } else if (payload.type === 'ERROR') {
-            setErrorMessage(payload.message || 'Error from WebSocket proxy');
-            setStatus('ERROR');
+          const payload =
+            JSON.parse(event.data);
+
+          console.log(
+            'WebSocket message:',
+            payload
+          );
+
+          /*
+           * Backend connection confirmation.
+           */
+          if (
+            payload.type === 'STATUS' &&
+            payload.status === 'CONNECTED'
+          ) {
+            updateStatus('RECORDING');
+
+            return;
           }
-        } catch (err) {
-          // ignore non-JSON message
+
+          /*
+           * THIS WAS MISSING IN YOUR ORIGINAL CODE.
+           *
+           * Backend sends:
+           *
+           * {
+           *   "type": "TRANSCRIPTION_DELTA",
+           *   "delta": "...",
+           *   "fullText": "..."
+           * }
+           */
+          if (
+            payload.type ===
+            'TRANSCRIPTION_DELTA'
+          ) {
+            const delta =
+              payload.delta || '';
+
+            const fullText =
+              payload.fullText || '';
+
+            console.log(
+              'Whisper transcription:',
+              payload
+            );
+
+            /*
+             * Prefer backend fullText.
+             */
+            if (fullText) {
+              setTranscript(fullText);
+            } else if (delta) {
+              setTranscript(
+                (previous) =>
+                  previous
+                    ? `${previous} ${delta}`.trim()
+                    : delta.trim()
+              );
+            }
+
+            /*
+             * Backend has already produced
+             * a real transcription.
+             */
+            setInterimTranscript('');
+
+            updateStatus('RECORDING');
+
+            return;
+          }
+
+          /*
+           * Backend error.
+           */
+          if (
+            payload.type === 'ERROR'
+          ) {
+            console.error(
+              'Backend WebSocket error:',
+              payload
+            );
+
+            setErrorMessage(
+              payload.message ||
+                'Transcription server error.'
+            );
+
+            updateStatus('ERROR');
+
+            return;
+          }
+        } catch (error) {
+          console.warn(
+            'Could not parse WebSocket message:',
+            event.data
+          );
         }
       };
 
-      socket.onerror = () => {
+      /*
+       * WebSocket error.
+       */
+      socket.onerror = (event) => {
+        console.error(
+          'WebSocket error:',
+          event
+        );
+
         if (isMountedRef.current) {
-          setErrorMessage('Could not connect to WebSocket proxy at ' + WS_BASE_URL);
-          setStatus('ERROR');
+          setErrorMessage(
+            `Could not connect to transcription server: ${wsUrl}`
+          );
+
+          updateStatus('ERROR');
         }
       };
 
-      socket.onclose = () => {
-        if (isMountedRef.current && status !== 'DISCONNECTED') {
-          setStatus('DISCONNECTED');
+      /*
+       * WebSocket closed.
+       */
+      socket.onclose = (event) => {
+        console.log(
+          'WebSocket closed:',
+          event.code,
+          event.reason
+        );
+
+        if (
+          isMountedRef.current &&
+          statusRef.current !==
+            'DISCONNECTED'
+        ) {
+          updateStatus('DISCONNECTED');
         }
       };
-    } catch (err: any) {
-      console.error('Failed to initialize microphone or WebSocket:', err);
+    } catch (error: any) {
+      console.error(
+        'Failed to initialize recording:',
+        error
+      );
+
       if (isMountedRef.current) {
-        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-          setErrorMessage('Microphone access denied. Please click the lock/settings icon in your address bar and allow microphone access.');
+        if (
+          error.name ===
+            'NotAllowedError' ||
+          error.name ===
+            'PermissionDeniedError'
+        ) {
+          setErrorMessage(
+            'Microphone access denied. Please allow microphone access in your browser settings.'
+          );
         } else {
-          setErrorMessage(err.message || 'Failed to start microphone recording.');
+          setErrorMessage(
+            error.message ||
+              'Failed to start microphone recording.'
+          );
         }
-        setStatus('ERROR');
-      }
-      stopRecording();
-    }
-  }, [languageCode, status, stopRecording]);
 
+        updateStatus('ERROR');
+      }
+
+      cleanupMediaTracks();
+      closeSocket();
+    }
+  }, [
+    languageCode,
+    stopRecording,
+    updateStatus,
+    cleanupMediaTracks,
+    closeSocket,
+  ]);
+
+  /*
+   * Cleanup when component unmounts.
+   */
   useEffect(() => {
     return () => {
       stopRecording();
